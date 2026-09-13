@@ -1,0 +1,8 @@
+{
+  "name": "youtube-listen-together",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-13",
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": true },
+  "durable_objects": { "bindings": [{ "name": "ROOMS", "class_name": "Room" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
+}
