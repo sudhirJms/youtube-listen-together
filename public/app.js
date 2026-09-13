@@ -1,16 +1,157 @@
-const $=s=>document.querySelector(s), esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));function toast(x){let e=$("#toast");e.textContent=x;e.style.display="block";setTimeout(()=>e.style.display="none",2200)}
-let ws,player,room,session,inviteToken,backoff=1000;const path=location.pathname;
-function shell(){document.body.classList.toggle("light",localStorage.theme==="light");$("#theme").onclick=()=>{localStorage.theme=document.body.classList.contains("light")?"dark":"light";shell()}}
-function landing(){ $("#app").innerHTML=`<section class="hero"><p class="muted">Private • Real-time • Free-first</p><h1>Listen Together</h1><p class="muted">Watch and listen to YouTube together, in sync, with your friends.</p><div class="row" style="justify-content:center"><button class="btn" id="create">Create Room</button><button class="btn secondary" id="join">Join Room</button></div></section><div class="grid"><div class="card"><b>No account required</b><p class="muted">Use a room session without email or phone.</p></div><div class="card"><b>Private rooms</b><p class="muted">Authorization is enforced by the server.</p></div><div class="card"><b>Real-time sync</b><p class="muted">Playback state is shared through WebSockets.</p></div></div>`;$("#create").onclick=()=>createForm();$("#join").onclick=()=>joinForm()}
-function createForm(){ $("#app").innerHTML=`<div class="card"><h2>Create room</h2><div class="form"><input id="name" class="input" maxlength="32" placeholder="Your name"><input id="rn" class="input" maxlength="60" placeholder="Room name"><select id="mode" class="input"><option value="private">Private — password required</option><option value="public">Public — code can request entry</option><option value="invite">Invite only</option></select><input id="pw" class="input" maxlength="64" placeholder="Password / PIN"><select id="max" class="input"><option>5</option><option selected>10</option><option>25</option><option>50</option></select><button class="btn" id="go">Create Room</button></div></div>`;$("#go").onclick=async()=>{let x={name:$("#name").value,roomName:$("#rn").value,mode:$("#mode").value,password:$("#pw").value,max:+$("#max").value};let r=await fetch("/api/create",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(x)});let d=await r.json();if(!r.ok)return toast(d.error||"Unable to create room");location.href="/room/"+d.code+"?token="+encodeURIComponent(d.token)+"&invite="+encodeURIComponent(d.invite)+"&name="+encodeURIComponent(x.name)}}
-function joinForm(){let code=path.startsWith("/join/")?path.split("/")[2]:"";$("#app").innerHTML=`<div class="card"><h2>Join room</h2><div class="form"><input id="code" class="input" maxlength="10" placeholder="Room code" value="${esc(code)}"><input id="name" class="input" maxlength="32" placeholder="Your name"><input id="pw" class="input" maxlength="64" placeholder="Password / PIN"><input id="tok" class="input" placeholder="Invite token (if required)"><button class="btn" id="go">Join Room</button></div></div>`;$("#go").onclick=()=>location.href="/room/"+$("#code").value.trim().toUpperCase()+"?token="+encodeURIComponent($("#tok").value||"")+"&&pw="+encodeURIComponent($("#pw").value)+"&name="+encodeURIComponent($("#name").value||"Listener")}
-function vid(s){try{let u=new URL(s);if(u.hostname==="youtu.be")return u.pathname.slice(1).split("/")[0];if(u.hostname.endsWith("youtube.com"))return u.searchParams.get("v")||u.pathname.match(/(?:embed|shorts)\/([^/]+)/)?.[1]}catch{}return /^[A-Za-z0-9_-]{11}$/.test(s)?s:null}
-function roomPage(){let p=new URLSearchParams(location.search);inviteToken=p.get("token")||p.get("invite")||"";let name=p.get("name")||"Listener";$("#app").innerHTML=`<div class="room"><div class="top"><div><h2 id="rname">Connecting…</h2><span id="status" class="pill">Connecting</span></div><button class="btn secondary" id="share">Share</button></div><div class="player" id="player"></div><div class="card"><div class="row"><input id="url" class="input" placeholder="Paste YouTube URL or video ID"><button class="btn" id="load">Load</button><button class="btn secondary" id="play">▶</button><button class="btn secondary" id="pause">⏸</button><button class="btn secondary" id="sync">↻ Sync</button></div></div><div class="grid"><section class="card"><h3>Queue</h3><div id="queue" class="list"></div></section><section class="card"><h3>Members</h3><div id="members" class="list"></div></section><section class="card"><h3>Chat</h3><div id="chat" class="list"></div><div class="row"><input id="msg" class="input" placeholder="Message"><button class="btn" id="send">Send</button></div></section></div></div>`;connect(name,p.get("pw")||"")}
-function connect(name,pw){let code=path.split("/")[2];let proto=location.protocol==="https:"?"wss":"ws";ws=new WebSocket(`${proto}://${location.host}/room/${code}?token=${encodeURIComponent(inviteToken)}&name=${encodeURIComponent(name)}&pw=${encodeURIComponent(pw)}`);ws.onopen=()=>{$("#status").textContent="Connected";backoff=1000;ws.send(JSON.stringify({type:"sync",requestId:crypto.randomUUID(),timestamp:Date.now()}))};ws.onclose=()=>{if($("#status"))$("#status").textContent="Reconnecting";setTimeout(()=>connect(name,pw),backoff);backoff=Math.min(30000,backoff*2)};ws.onmessage=e=>handle(JSON.parse(e.data))}
+const $=s=>document.querySelector(s), esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function toast(x){let e=$("#toast");if(!e)return;e.textContent=x;e.style.display="block";setTimeout(()=>e.style.display="none",2200)}
+
+let ws,player,room,session,inviteToken,backoff=1000;
+const path=location.pathname;
+
+function shell(){
+  document.body.classList.toggle("light",localStorage.theme==="light");
+  if($("#theme")){
+    $("#theme").onclick=()=>{
+      localStorage.theme=document.body.classList.contains("light")?"dark":"light";
+      shell()
+    }
+  }
+}
+
+function landing(){ 
+  $("#app").innerHTML=`<section class="hero"><p class="muted">Private • Real-time • Free-first</p><h1>Listen Together</h1><p class="muted">Watch and listen to YouTube together, in sync, with your friends.</p><div class="row" style="justify-content:center"><button class="btn" id="create">Create Room</button><button class="btn secondary" id="join">Join Room</button></div></section><div class="grid"><div class="card"><b>No account required</b><p class="muted">Use a room session without email or phone.</p></div><div class="card"><b>Private rooms</b><p class="muted">Authorization is enforced by the server.</p></div><div class="card"><b>Real-time sync</b><p class="muted">Playback state is shared through WebSockets.</p></div></div>`;
+  $("#create").onclick=()=>createForm();
+  $("#join").onclick=()=>joinForm()
+}
+
+function createForm(){ 
+  $("#app").innerHTML=`<div class="card"><h2>Create room</h2><div class="form"><input id="name" class="input" maxlength="32" placeholder="Your name"><input id="rn" class="input" maxlength="60" placeholder="Room name"><select id="mode" class="input"><option value="private">Private — password required</option><option value="public">Public — code can request entry</option><option value="invite">Invite only</option></select><input id="pw" class="input" maxlength="64" placeholder="Password / PIN"><select id="max" class="input"><option>5</option><option selected>10</option><option>25</option><option>50</option></select><button class="btn" id="go">Create Room</button></div></div>`;
+  $("#go").onclick=async()=>{
+    let x={name:$("#name").value,roomName:$("#rn").value,mode:$("#mode").value,password:$("#pw").value,max:+$("#max").value};
+    let r=await fetch("/api/create",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(x)});
+    let d=await r.json();
+    if(!r.ok)return toast(d.error||"Unable to create room");
+    location.href="/room/"+d.code+"?token="+encodeURIComponent(d.token)+"&invite="+encodeURIComponent(d.invite)+"&name="+encodeURIComponent(x.name)
+  }
+}
+
+function joinForm(){
+  let code=path.startsWith("/join/")?path.split("/")[2]:"";
+  $("#app").innerHTML=`<div class="card"><h2>Join room</h2><div class="form"><input id="code" class="input" maxlength="10" placeholder="Room code" value="${esc(code)}"><input id="name" class="input" maxlength="32" placeholder="Your name"><input id="pw" class="input" maxlength="64" placeholder="Password / PIN"><input id="tok" class="input" placeholder="Invite token (if required)"><button class="btn" id="go">Join Room</button></div></div>`;
+  $("#go").onclick=()=>location.href="/room/"+$("#code").value.trim().toUpperCase()+"?token="+encodeURIComponent($("#tok").value||"")+"&pw="+encodeURIComponent($("#pw").value)+"&name="+encodeURIComponent($("#name").value||"Listener")
+}
+
+// FIXED: This function correctly handles youtu.be links with query parameters
+function vid(s){
+  try{
+    let u=new URL(s);
+    if(u.hostname==="youtu.be")return u.pathname.slice(1).split("/")[0];
+    if(u.hostname.endsWith("youtube.com"))return u.searchParams.get("v")||u.pathname.match(/(?:embed|shorts)\/([^/]+)/)?.[1]
+  }catch{}
+  return /^[A-Za-z0-9_-]{11}$/.test(s)?s:null
+}
+
+function roomPage(){
+  let p=new URLSearchParams(location.search);
+  inviteToken=p.get("token")||p.get("invite")||"";
+  let name=p.get("name")||"Listener";
+  $("#app").innerHTML=`<div class="room"><div class="top"><div><h2 id="rname">Connecting…</h2><span id="status" class="pill">Connecting</span></div><button class="btn secondary" id="share">Share</button></div><div class="player" id="player"></div><div class="card"><div class="row"><input id="url" class="input" placeholder="Paste YouTube URL or video ID"><button class="btn" id="load">Load</button><button class="btn secondary" id="play">▶</button><button class="btn secondary" id="pause">⏸</button><button class="btn secondary" id="sync">↻ Sync</button></div></div><div class="grid"><section class="card"><h3>Queue</h3><div id="queue" class="list"></div></section><section class="card"><h3>Members</h3><div id="members" class="list"></div></section><section class="card"><h3>Chat</h3><div id="chat" class="list"></div><div class="row"><input id="msg" class="input" placeholder="Message"><button class="btn" id="send">Send</button></div></section></div></div>`;
+  connect(name,p.get("pw")||"")
+}
+
+function connect(name,pw){
+  let code=path.split("/")[2];
+  let proto=location.protocol==="https:"?"wss":"ws";
+  ws=new WebSocket(`${proto}://${location.host}/room/${code}?token=${encodeURIComponent(inviteToken)}&name=${encodeURIComponent(name)}&pw=${encodeURIComponent(pw)}`);
+  ws.onopen=()=>{
+    $("#status").textContent="Connected";
+    backoff=1000;
+    ws.send(JSON.stringify({type:"sync",requestId:crypto.randomUUID(),timestamp:Date.now()}))
+  };
+  ws.onclose=()=>{
+    if($("#status"))$("#status").textContent="Reconnecting";
+    setTimeout(()=>connect(name,pw),backoff);
+    backoff=Math.min(30000,backoff*2)
+  };
+  ws.onmessage=e=>handle(JSON.parse(e.data))
+}
+
 function send(o){if(ws?.readyState===1)ws.send(JSON.stringify({...o,requestId:crypto.randomUUID(),timestamp:Date.now()}))}
-function handle(m){if(m.type==="welcome"){session=m.sessionId;room=m.room;render();if(room.videoId)setVideo(room.videoId)}if(m.type==="room_state"){room=m.room;render();if(room.videoId&&!player)setVideo(room.videoId)}if(m.type==="playback"){room={...room,...m};applyPlayback(m)}if(m.type==="chat"){let e=document.createElement("div");e.className="item";e.textContent=`${m.message.name}: ${m.message.text}`;$("#chat").append(e)}if(m.type==="member_joined"||m.type==="member_left"||m.type==="host_changed")send({type:"sync"});if(m.type==="error")toast(m.message);if(m.type==="room_ended"){toast("Room ended");setTimeout(()=>location.href="/",1200)}}
-function render(){if(!room)return;$("#rname").textContent=room.roomName;$("#members").innerHTML="";room.members.forEach(m=>{let e=document.createElement("div");e.className="item";e.textContent=(m.host?"👑 ":"🟢 ")+m.name;$("#members").append(e)});$("#queue").innerHTML="";room.queue.forEach((q,i)=>{let e=document.createElement("div");e.className="item";e.textContent=`${i+1}. ${q.title}`;$("#queue").append(e)})}
-function setVideo(v){if(!window.YT)return setTimeout(()=>setVideo(v),500);$("#player").innerHTML='<div id="yt"></div>';player=new YT.Player("yt",{videoId:v,playerVars:{playsinline:1,rel:0},events:{onReady:()=>applyPlayback(room)}})}
-function applyPlayback(s){if(!player||!player.getPlayerState)return;let expected=s.position+(s.isPlaying?(Date.now()-s.serverTimestamp)/1000:0),actual=player.getCurrentTime()||0,d=Math.abs(expected-actual);if(d>2)player.seekTo(expected,true);if(s.isPlaying&&player.getPlayerState()!==1)player.playVideo();if(!s.isPlaying&&player.getPlayerState()===1)player.pauseVideo()}
-$("#theme").onclick=()=>{};shell();if(path==="/")landing();else if(path.startsWith("/join/"))joinForm();else if(path.startsWith("/room/"))roomPage();else if(path==="/privacy"||path==="/terms")$("#app").innerHTML=`<div class="card"><h2>${path==="/privacy"?"Privacy":"Terms"}</h2><p class="muted">${path==="/privacy"?"No account is required. Room state is temporary where possible. Do not share sensitive information in chat. YouTube content is provided by YouTube and browser policies apply.":"Respect copyright and do not abuse, overload, attack, or use the service illegally. Availability may be limited. YouTube content remains governed by YouTube policies."}</p></div>`;
-document.addEventListener("click",e=>{if(e.target.id==="load"){let v=vid($("#url").value);if(!v)return toast("Enter a valid YouTube URL");send({type:"load",videoId:v})}if(e.target.id==="play")send({type:"play"});if(e.target.id==="pause")send({type:"pause"});if(e.target.id==="sync")send({type:"sync"});if(e.target.id==="send"){let t=$("#msg").value.trim();if(t){send({type:"chat",text:t});$("#msg").value=""}}if(e.target.id==="share")navigator.share?navigator.share({title:room.roomName,url:location.href}):navigator.clipboard.writeText(location.href).then(()=>toast("Copied!"))});
+
+function handle(m){
+  if(m.type==="welcome"){
+    session=m.sessionId;room=m.room;render();
+    if(room.videoId)setVideo(room.videoId)
+  }
+  if(m.type==="room_state"){
+    room=m.room;render();
+    if(room.videoId&&!player)setVideo(room.videoId)
+  }
+  if(m.type==="playback"){room={...room,...m};applyPlayback(m)}
+  if(m.type==="chat"){
+    let e=document.createElement("div");
+    e.className="item";e.textContent=`${m.message.name}: ${m.message.text}`;
+    $("#chat").append(e)
+  }
+  if(m.type==="member_joined"||m.type==="member_left"||m.type==="host_changed")send({type:"sync"});
+  if(m.type==="error")toast(m.message);
+  if(m.type==="room_ended"){toast("Room ended");setTimeout(()=>location.href="/",1200)}
+}
+
+function render(){
+  if(!room)return;
+  $("#rname").textContent=room.roomName;
+  $("#members").innerHTML="";
+  room.members.forEach(m=>{
+    let e=document.createElement("div");
+    e.className="item";e.textContent=(m.host?"👑 ":"🟢 ")+m.name;
+    $("#members").append(e)
+  });
+  $("#queue").innerHTML="";
+  room.queue.forEach((q,i)=>{
+    let e=document.createElement("div");
+    e.className="item";e.textContent=`${i+1}. ${q.title}`;
+    $("#queue").append(e)
+  })
+}
+
+// IMPROVED: Reuse existing player instead of destroying it every time
+function setVideo(v){
+  if(!window.YT)return setTimeout(()=>setVideo(v),500);
+  if(player && player.loadVideoById){
+    player.loadVideoById(v);
+    return;
+  }
+  $("#player").innerHTML='<div id="yt"></div>';
+  player=new YT.Player("yt",{videoId:v,playerVars:{playsinline:1,rel:0},events:{onReady:()=>applyPlayback(room)}})
+}
+
+function applyPlayback(s){
+  if(!player||!player.getPlayerState)return;
+  let expected=s.position+(s.isPlaying?(Date.now()-s.serverTimestamp)/1000:0);
+  let actual=player.getCurrentTime()||0;
+  let d=Math.abs(expected-actual);
+  if(d>2)player.seekTo(expected,true);
+  if(s.isPlaying&&player.getPlayerState()!==1)player.playVideo();
+  if(!s.isPlaying&&player.getPlayerState()===1)player.pauseVideo()
+}
+
+shell();
+if(path==="/")landing();
+else if(path.startsWith("/join/"))joinForm();
+else if(path.startsWith("/room/"))roomPage();
+else if(path==="/privacy"||path==="/terms")$("#app").innerHTML=`<div class="card"><h2>${path==="/privacy"?"Privacy":"Terms"}</h2><p class="muted">${path==="/privacy"?"No account is required. Room state is temporary where possible. Do not share sensitive information in chat. YouTube content is provided by YouTube and browser policies apply.":"Respect copyright and do not abuse, overload, attack, or use the service illegally. Availability may be limited. YouTube content remains governed by YouTube policies."}</p></div>`;
+
+document.addEventListener("click",e=>{
+  if(e.target.id==="load"){
+    let v=vid($("#url").value);
+    if(!v)return toast("Enter a valid YouTube URL");
+    send({type:"load",videoId:v})
+  }
+  if(e.target.id==="play")send({type:"play"});
+  if(e.target.id==="pause")send({type:"pause"});
+  if(e.target.id==="sync")send({type:"sync"});
+  if(e.target.id==="send"){
+    let t=$("#msg").value.trim();
+    if(t){send({type:"chat",text:t});$("#msg").value=""}
+  }
+  if(e.target.id==="share"){
+    navigator.share?navigator.share({title:room.roomName,url:location.href}):navigator.clipboard.writeText(location.href).then(()=>toast("Copied!"))
+  }
+});
