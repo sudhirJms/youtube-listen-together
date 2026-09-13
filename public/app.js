@@ -37,7 +37,7 @@ function joinForm(){
   $("#go").onclick=()=>location.href="/room/"+$("#code").value.trim().toUpperCase()+"?token="+encodeURIComponent($("#tok").value||"")+"&pw="+encodeURIComponent($("#pw").value)+"&name="+encodeURIComponent($("#name").value||"Listener")
 }
 
-// FIXED: This function correctly handles youtu.be links with query parameters
+// 🟢 यहाँ फिक्स किया गया है (youtu.be के ?si=... पार्ट को हटाने के लिए)
 function vid(s){
   try{
     let u=new URL(s);
@@ -111,7 +111,7 @@ function render(){
   })
 }
 
-// IMPROVED: Reuse existing player instead of destroying it every time
+// 🟢 यहाँ भी सुधार किया गया है (बार-बार प्लेयर डिलीट नहीं होगा)
 function setVideo(v){
   if(!window.YT)return setTimeout(()=>setVideo(v),500);
   if(player && player.loadVideoById){
@@ -144,8 +144,8 @@ document.addEventListener("click",e=>{
     if(!v)return toast("Enter a valid YouTube URL");
     send({type:"load",videoId:v})
   }
-  if(e.target.id==="play")send({type:"play"});
-  if(e.target.id==="pause")send({type:"pause"});
+  if(e.target.id==="play")send({type:"play", position: player ? player.getCurrentTime() : 0});
+  if(e.target.id==="pause")send({type:"pause", position: player ? player.getCurrentTime() : 0});
   if(e.target.id==="sync")send({type:"sync"});
   if(e.target.id==="send"){
     let t=$("#msg").value.trim();
